@@ -1,56 +1,193 @@
 class TreeViewer {
   constructor(container) {
     this.container = container;
+    this.addSearchBar();
+    this.addControlButtons();
   }
 
   async parseXSDFiles(files) {
-    const parser = new DOMParser();
-    const xsdDocs = [];
+    try {
+      this.showLoading();
+      const parser = new DOMParser();
+      const xsdDocs = [];
 
-    for (const file of files) {
-      const text = await file.text();
-      const doc = parser.parseFromString(text, "text/xml");
-      xsdDocs.push({ name: file.name, doc });
+      for (const file of files) {
+        try {
+          const text = await file.text();
+          const doc = parser.parseFromString(text, "text/xml");
+
+          if (doc.querySelector("parsererror")) {
+            throw new Error(`Invalid XML in file: ${file.name}`);
+          }
+
+          xsdDocs.push({ name: file.name, doc });
+        } catch (error) {
+          console.error(`Error processing file ${file.name}:`, error);
+        }
+      }
+
+      if (xsdDocs.length === 0) {
+        throw new Error("No valid XSD files were loaded");
+      }
+
+      console.log("XSD Docs:", xsdDocs); // Debug log
+      const processedData = this.processXSDDocs(xsdDocs);
+      console.log("Processed Data:", processedData); // Debug log
+
+      const stats = this.generateSchemaStats(processedData);
+      console.log("Generated Stats:", stats); // Debug log
+
+      this.generateSchemaStats(stats);
+      this.renderTree(processedData);
+    } catch (error) {
+      console.error("Error parsing files:", error);
+    } finally {
+      this.hideLoading();
+    }
+  }
+
+  renderFileList(fileNames) {
+    const existingList = document.querySelector(".file-list");
+    if (existingList) {
+      existingList.remove();
     }
 
-    const processedData = this.processXSDDocs(xsdDocs);
-    const stats = this.generateSchemaStats(processedData);
+    const fileList = document.createElement("div");
+    fileList.className = "file-list";
 
-    this.renderStats(stats);
-    this.renderTree(processedData);
+    fileList.innerHTML = `
+        <div class="file-list-header">Loaded Files:</div>
+        <div class="file-list-content">
+            ${fileNames
+              .map(
+                (name) => `
+                <div class="file-item">
+                    <span class="file-name">${name}</span>
+                </div>
+            `
+              )
+              .join("")}
+        </div>
+    `;
+
+    const header = document.querySelector("header");
+    header.querySelector(".header-content").appendChild(fileList);
+  }
+
+  showLoading() {
+    const loader = document.createElement("div");
+    loader.className = "loader";
+    loader.innerHTML = `
+        <div class="loader-content">
+            <div class="spinner"></div>
+            <div>Processing files...</div>
+        </div>
+    `;
+    document.body.appendChild(loader);
+  }
+
+  hideLoading() {
+    const loader = document.querySelector(".loader");
+    if (loader) loader.remove();
+  }
+
+  showError(message) {
+    const errorDiv = document.createElement("div");
+    errorDiv.className = "error-message";
+    errorDiv.textContent = message;
+    this.container.prepend(errorDiv);
+
+    setTimeout(() => errorDiv.remove(), 5000);
+  }
+
+  showError(message) {
+    const errorDiv = document.createElement("div");
+    errorDiv.className = "error-message";
+    errorDiv.textContent = message;
+    this.container.prepend(errorDiv);
+
+    setTimeout(() => errorDiv.remove(), 5000);
   }
 
   processXSDDocs(docs) {
+    if (!Array.isArray(docs)) {
+      console.error("Expected array of docs, got:", docs);
+      return [];
+    }
+
     const types = [];
 
-    docs.forEach(({ doc, name }) => {
-      const simpleTypes = doc.querySelectorAll("simpleType");
-      simpleTypes.forEach((type) => {
-        const typeData = this.processType(type, "simpleType", name);
-        if (typeData) types.push(typeData);
-      });
+    for (const { doc, name } of docs) {
+      if (!doc || !name) {
+        console.error("Invalid doc object:", { doc, name });
+        continue;
+      }
 
-      const complexTypes = doc.querySelectorAll("complexType");
-      complexTypes.forEach((type) => {
-        const typeData = this.processType(type, "complexType", name);
-        if (typeData) types.push(typeData);
-      });
-    });
+      types.push(...this.processSimpleTypes(doc, name));
+      types.push(...this.processComplexTypes(doc, name));
+      types.push(...this.processElements(doc, name));
+      types.push(...this.processComplexContent(doc, name));
+    }
 
-    return types.sort((a, b) => a.name.localeCompare(b.name));
+    return types;
+  }
+
+  processSimpleTypes(doc, fileName) {
+    const simpleTypes = [];
+    const simpleTypeElements = doc.querySelectorAll("simpleType");
+
+    for (const typeElement of simpleTypeElements) {
+      const typeData = this.processType(typeElement, "simpleType", fileName);
+      if (typeData) {
+        simpleTypes.push(typeData);
+      }
+    }
+
+    return simpleTypes;
+  }
+
+  processComplexTypes(doc, fileName) {
+    const complexTypes = [];
+    const complexTypeElements = doc.querySelectorAll("complexType");
+
+    for (const typeElement of complexTypeElements) {
+      const typeData = this.processType(typeElement, "complexType", fileName);
+      if (typeData) {
+        complexTypes.push(typeData);
+      }
+    }
+
+    return complexTypes;
+  }
+
+  processElements(doc, fileName) {
+    const elements = [];
+    const elementElements = doc.querySelectorAll("schema > element");
+
+    for (const elementElement of elementElements) {
+      const elementData = this.processType(elementElement, "element", fileName);
+      if (elementData) {
+        elements.push(elementData);
+      }
+    }
+
+    return elements;
   }
 
   processType(typeElement, typeKind, fileName) {
     const name = typeElement.getAttribute("name");
-    if (!name) return null;
+    if (!name) {
+      return null;
+    }
 
     const children = [];
     const documentation = this.getDocumentation(typeElement);
     const restrictions = this.getRestrictions(typeElement);
     const attributes = this.getAttributes(typeElement);
 
+    // Process enumerations
     const enums = typeElement.querySelectorAll("enumeration");
-    enums.forEach((enum_) => {
+    for (const enum_ of enums) {
       const value = enum_.getAttribute("value");
       const enumDoc = this.getDocumentation(enum_);
       children.push({
@@ -58,10 +195,11 @@ class TreeViewer {
         type: "enumeration",
         documentation: enumDoc,
       });
-    });
+    }
 
+    // Process child elements
     const elements = typeElement.querySelectorAll("element");
-    elements.forEach((element) => {
+    for (const element of elements) {
       const elementName = element.getAttribute("name");
       const elementType = element.getAttribute("type");
       const elementDoc = this.getDocumentation(element);
@@ -74,7 +212,24 @@ class TreeViewer {
         minOccurs,
         maxOccurs,
       });
-    });
+    }
+
+    // Process complexContent
+    const complexContent = typeElement.querySelector("complexContent");
+    if (complexContent) {
+      const baseType = complexContent.getAttribute("base");
+      const extension = complexContent.querySelector("extension");
+      if (extension) {
+        const complexContentData = this.processComplexContentExtension(
+          extension,
+          baseType,
+          fileName
+        );
+        if (complexContentData) {
+          children.push(complexContentData);
+        }
+      }
+    }
 
     return {
       name,
@@ -85,6 +240,63 @@ class TreeViewer {
       children,
       fileName,
     };
+  }
+
+  processComplexContent(doc, fileName) {
+    const complexContentTypes = [];
+    const complexContentElements = doc.querySelectorAll(
+      "complexType > complexContent"
+    );
+
+    for (const contentElement of complexContentElements) {
+      const baseType = contentElement.getAttribute("base");
+      const extension = contentElement.querySelector("extension");
+
+      if (extension) {
+        const typeData = this.processComplexContentExtension(
+          extension,
+          baseType,
+          fileName
+        );
+        if (typeData) {
+          complexContentTypes.push(typeData);
+        }
+      }
+    }
+
+    return complexContentTypes;
+  }
+
+  processComplexContentExtension(extensionElement, baseType, fileName) {
+    const name = extensionElement.getAttribute("base");
+    const sequenceElement = extensionElement.querySelector("sequence");
+    const children = this.processSequenceGroup(sequenceElement);
+
+    return {
+      name,
+      type: "complexContent",
+      baseType,
+      children,
+      fileName,
+    };
+  }
+
+  processSequenceGroup(sequenceElement) {
+    if (!sequenceElement) {
+      return [];
+    }
+
+    const children = [];
+    const elements = sequenceElement.querySelectorAll("element");
+
+    for (const element of elements) {
+      const elementData = this.processType(element, "element", null);
+      if (elementData) {
+        children.push(elementData);
+      }
+    }
+
+    return children;
   }
 
   getDocumentation(element) {
@@ -208,93 +420,159 @@ class TreeViewer {
   }
 
   generateSchemaStats(types) {
-    const stats = {
-      totalTypes: types.length,
-      simpleTypes: 0,
-      complexTypes: 0,
-      elements: 0,
-      enumerations: 0,
-      totalAttributes: 0,
-      files: new Set(),
-    };
+    if (!Array.isArray(types)) {
+      console.error("Types is not an array:", types);
+      return [];
+    }
 
-    const processNode = (node) => {
-      if (node.fileName) stats.files.add(node.fileName);
-
-      const nodeType = (node.type || "").toLowerCase();
-
-      switch (nodeType) {
-        case "simpletype":
-          stats.simpleTypes++;
-          break;
-        case "complextype":
-          stats.complexTypes++;
-          break;
-        case "element":
-          stats.elements++;
-          break;
-        case "enumeration":
-          stats.enumerations++;
-          break;
+    const typesByFile = types.reduce((acc, type) => {
+      const fileName = type.fileName || "Unknown File";
+      if (!acc[fileName]) {
+        acc[fileName] = [];
       }
+      acc[fileName].push(type);
+      return acc;
+    }, {});
 
-      if (node.attributes) {
-        stats.totalAttributes += node.attributes.length;
-      }
+    return Object.entries(typesByFile).map(([fileName, fileTypes]) => {
+      const stats = {
+        totalTypes: fileTypes.length,
+        simpleTypes: 0,
+        complexTypes: 0,
+        elements: 0,
+        enumerations: 0,
+        totalAttributes: 0,
+        fileName,
+      };
 
-      if (node.children) {
-        node.children.forEach(processNode);
-      }
-    };
+      fileTypes.forEach((type) => {
+        const nodeType = (type.type || "").toLowerCase();
+        switch (nodeType) {
+          case "simpletype":
+            stats.simpleTypes++;
+            break;
+          case "complextype":
+            stats.complexTypes++;
+            break;
+          case "element":
+            stats.elements++;
+            break;
+          case "enumeration":
+            stats.enumerations++;
+            break;
+        }
 
-    types.forEach(processNode);
+        if (type.attributes) {
+          stats.totalAttributes += type.attributes.length;
+        }
+      });
 
-    return stats;
+      return stats;
+    });
   }
 
-  renderStats(stats) {
-    const statsPanel = document.createElement("div");
-    statsPanel.className = "stats-panel";
+  renderTree(stats) {
+    if (!Array.isArray(stats)) {
+      console.error("Expected array of stats, got:", stats);
+      return;
+    }
 
-    statsPanel.innerHTML = `
-  <div class="stats-grid">
-      <div class="stat-item">
-          <div class="stat-value">${stats.totalTypes}</div>
-          <div class="stat-label">Total Types</div>
-      </div>
-      <div class="stat-item">
-          <div class="stat-value">${stats.simpleTypes}</div>
-          <div class="stat-label">Simple Types</div>
-      </div>
-      <div class="stat-item">
-          <div class="stat-value">${stats.complexTypes}</div>
-          <div class="stat-label">Complex Types</div>
-      </div>
-      <div class="stat-item">
-          <div class="stat-value">${stats.elements}</div>
-          <div class="stat-label">Elements</div>
-      </div>
-      <div class="stat-item">
-          <div class="stat-value">${stats.enumerations}</div>
-          <div class="stat-label">Enumerations</div>
-      </div>
-      <div class="stat-item">
-          <div class="stat-value">${stats.totalAttributes}</div>
-          <div class="stat-label">Total Attributes</div>
-      </div>
-      <div class="stat-item">
-          <div class="stat-value">${stats.files.size}</div>
-          <div class="stat-label">Files Loaded</div>
-      </div>
-  </div>
-`;
+    this.container.innerHTML = "";
+
+    stats.forEach((fileStats) => {
+      const fileSection = document.createElement("div");
+      fileSection.className = "file-section";
+
+      const fileHeader = document.createElement("div");
+      fileHeader.className = "file-header";
+      fileHeader.textContent = `File: ${fileStats.fileName} (${fileStats.totalTypes} types)`;
+      fileSection.appendChild(fileHeader);
+
+      fileStats.types.forEach((type) => {
+        fileSection.appendChild(this.createNodeElement(type));
+      });
+
+      this.container.appendChild(fileSection);
+    });
+  }
+
+  addSearchBar() {
+    const searchDiv = document.createElement("div");
+    searchDiv.className = "search-container";
+    searchDiv.innerHTML = `
+        <input type="text" 
+               id="schemaSearch" 
+               placeholder="Search schema..." 
+               class="search-input">
+    `;
 
     const header = document.querySelector("header");
-    header.parentNode.insertBefore(statsPanel, header.nextSibling);
+    header.querySelector(".header-content").appendChild(searchDiv);
+
+    document.getElementById("schemaSearch").addEventListener("input", (e) => {
+      this.filterNodes(e.target.value.toLowerCase());
+    });
+  }
+
+  filterNodes(searchTerm) {
+    const allNodes = document.querySelectorAll(".tree-node");
+    allNodes.forEach((node) => {
+      const nodeName = node
+        .querySelector(".node-name")
+        .textContent.toLowerCase();
+      const nodeType =
+        node.querySelector(".node-type")?.textContent.toLowerCase() || "";
+      const documentation =
+        node.querySelector(".documentation")?.textContent.toLowerCase() || "";
+
+      const matches =
+        nodeName.includes(searchTerm) ||
+        nodeType.includes(searchTerm) ||
+        documentation.includes(searchTerm);
+
+      node.style.display = matches ? "" : "none";
+    });
+  }
+
+  addControlButtons() {
+    const buttonContainer = document.createElement("div");
+    buttonContainer.className = "control-buttons";
+    buttonContainer.innerHTML = `
+        <button class="control-btn" id="expandAll">Expand All</button>
+        <button class="control-btn" id="collapseAll">Collapse All</button>
+    `;
+
+    const searchContainer = document.querySelector(".search-container");
+    searchContainer.appendChild(buttonContainer);
+
+    document.getElementById("expandAll").onclick = () => this.toggleAll(true);
+    document.getElementById("collapseAll").onclick = () =>
+      this.toggleAll(false);
+  }
+
+  toggleAll(expand) {
+    const toggleButtons = document.querySelectorAll(".toggle-btn");
+    const childrenDivs = document.querySelectorAll(".children");
+
+    toggleButtons.forEach((btn) => {
+      if (expand) btn.classList.add("open");
+      else btn.classList.remove("open");
+    });
+
+    childrenDivs.forEach((div) => {
+      if (expand) div.classList.remove("hidden");
+      else div.classList.add("hidden");
+    });
   }
 
   renderTree(types) {
+    if (!Array.isArray(types)) {
+      console.error("Expected array of types, got:", types);
+      return;
+    }
+
     this.container.innerHTML = "";
+
     types.forEach((type) => {
       this.container.appendChild(this.createNodeElement(type));
     });

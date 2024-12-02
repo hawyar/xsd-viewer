@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" type="image/svg+xml" href="/public/xsd.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -18,13 +18,16 @@
     <body>
       <header>
         <div class="header-content">
+          <div class="xx">
           <div class="title-section">
             <h1>XSD Schema Viewer</h1>
             <div class="subtitle">XML Schema Definition Viewer</div>
+            <a href="https://github.com/hawyar/xsd-viewer">View Source on GitHub</a>
           </div>
           <div class="file-input-section">
             <input type="file" id="xsdFile" accept=".xsd" multiple />
           </div>
+        </div>
         </div>
       </header>
       <div id="treeViewer" class="tree-viewer"></div>
